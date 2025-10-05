@@ -299,13 +299,11 @@ function agregarGastosPorPanelDesdeCampanias(hoja, campaniasMetaAds) {
     // --- Escribir en la hoja ---
     const datosPaneles = hoja.getRange(5, 1, hoja.getLastRow() - 4, 1).getValues();
     datosPaneles.forEach((fila, index) => {
-        // ✅ CORRECCIÓN: Asegurar que fila[0] sea string antes de usar trim()
-        const valorPanel = fila[0];
-        const panelString = (valorPanel === null || valorPanel === undefined) ? "" : String(valorPanel);
-        
+        const panelString = String(fila[0] ?? '').trim();
+
         // ✅ NUEVO: Convertir el panelString a número para hacer el match
         let numeroPanel = normalizarPanel(panelString);
-        
+
         // Si el panel normalizado no es un número, intentar extraerlo
         if (!numeroPanel.match(/^\d+$/)) {
             // Intentar buscar el número en el mapeo
@@ -317,7 +315,7 @@ function agregarGastosPorPanelDesdeCampanias(hoja, campaniasMetaAds) {
                 }
             }
         }
-        
+
         console.log(`🔄 Panel fila ${index + 1}: "${panelString}" → Número: "${numeroPanel}"`);
 
         const gastoSinRec = gastosSinRec[numeroPanel] || 0;
