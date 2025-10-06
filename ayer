@@ -158,6 +158,10 @@ function crearEncabezadosMensajesAyer(hoja, fechaAyer) {
 
 function llenarDatosMensajesAyer(hoja, reportePaneles) {
     const filaInicio = 5;
+    
+    // Obtener mapeo de números a nombres
+    const mapeoNumeroANombre = obtenerMapeoDesdeHojaPaneles();
+    console.log('🗂️ Mapeo obtenido para llenar datos:', mapeoNumeroANombre);
 
     reportePaneles.forEach((panelData, index) => {
         const fila = filaInicio + index;
@@ -172,9 +176,14 @@ function llenarDatosMensajesAyer(hoja, reportePaneles) {
             hoja.getRange(fila, 1, 1, 4).setBackground("#f9fbe7");
         }
 
+        // Convertir número de panel a nombre usando el mapeo dinámico
+        const numeroPanel = String(panelData.panel || "");
+        const nombrePanel = mapeoNumeroANombre[numeroPanel] || numeroPanel;
+
+        console.log(`📋 Panel ${index + 1}: Número "${numeroPanel}" → Nombre "${nombrePanel}"`);
+
         // Llenar las columnas con los datos correctos
-        // ✅ CORRECCIÓN: Usar panelData.panel directamente (ya es string)
-        hoja.getRange(fila, 1).setValue(String(panelData.panel || ""));
+        hoja.getRange(fila, 1).setValue(nombrePanel);
         hoja.getRange(fila, 2).setValue(mensajes);
         hoja.getRange(fila, 3).setValue(cargas);
         hoja.getRange(fila, 4).setValue(porcentaje);
@@ -222,6 +231,14 @@ function agregarGastosPorPanelDesdeCampanias(hoja, campaniasMetaAds) {
     const mapeoNumeroANombre = obtenerMapeoDesdeHojaPaneles();
     console.log('🗂️ Mapeo número → nombre:', mapeoNumeroANombre);
     
+    // Crear mapeo inverso dinámico (nombre → número)
+    const mapeoNombreANumero = {};
+    for (let numero in mapeoNumeroANombre) {
+        const nombre = mapeoNumeroANombre[numero];
+        mapeoNombreANumero[nombre] = numero;
+    }
+    console.log('🔄 Mapeo nombre → número:', mapeoNombreANumero);
+    
     // Obtener mapeo de nombres desde la hoja externa (por si acaso)
     const mapeoNombres = obtenerMapeoNombresDesdeHojaExterna();
     
@@ -235,22 +252,6 @@ function agregarGastosPorPanelDesdeCampanias(hoja, campaniasMetaAds) {
         crearColumnasVaciasDeGastos(hoja);
         return;
     }
-
-    // 🔑 Diccionario de nombres → número de panel (fallback)
-    const mapaPanelesLegacy = {
-        "oporto": "1",
-        "omaris": "2", 
-        "luck": "3",
-        "denver": "4",
-        "treboldorado": "5",
-        "dragon": "6",
-        "escaloneta": "7",
-        "vicemiami": "8",
-        "monaco": "9",
-        "goatgaming": "10",
-        "muchas": "11",
-        "thiagop": "12"
-    };
 
     const gastosSinRec = {};
     const gastosConRec = {};
@@ -269,10 +270,10 @@ function agregarGastosPorPanelDesdeCampanias(hoja, campaniasMetaAds) {
                 const nombreCampania = (campania.nombre || "").toLowerCase();
                 const gasto = campania.metricas_diarias?.spend || 0;
 
-                // --- Normalizar panel detectado ---
-                const panelDetectado = normalizarPanelDesdeCampaniaConMapeo(
+                // --- Normalizar panel detectado usando solo mapeo dinámico ---
+                const panelDetectado = normalizarPanelDesdeCampaniaConMapeoDinamico(
                     nombreCampania, 
-                    mapaPanelesLegacy, 
+                    mapeoNombreANumero,
                     mapeoNumeroANombre
                 );
                 
@@ -301,22 +302,10 @@ function agregarGastosPorPanelDesdeCampanias(hoja, campaniasMetaAds) {
     datosPaneles.forEach((fila, index) => {
         const panelString = String(fila[0] ?? '').trim();
 
-        // ✅ NUEVO: Convertir el panelString a número para hacer el match
-        let numeroPanel = normalizarPanel(panelString);
+        // ✅ CORRECCIÓN: Usar mapeo dinámico para obtener el número
+        const numeroPanel = mapeoNombreANumero[panelString.toLowerCase()] || panelString;
 
-        // Si el panel normalizado no es un número, intentar extraerlo
-        if (!numeroPanel.match(/^\d+$/)) {
-            // Intentar buscar el número en el mapeo
-            const nombreBuscado = panelString.toLowerCase();
-            for (let num in mapeoNumeroANombre) {
-                if (mapeoNumeroANombre[num] === nombreBuscado) {
-                    numeroPanel = num;
-                    break;
-                }
-            }
-        }
-
-        console.log(`🔄 Panel fila ${index + 1}: "${panelString}" → Número: "${numeroPanel}"`);
+        console.log(`🔄 Panel fila ${index + 1}: "${panelString}" → Número para gastos: "${numeroPanel}"`);
 
         const gastoSinRec = gastosSinRec[numeroPanel] || 0;
         const gastoConRec = gastosConRec[numeroPanel] || 0;
@@ -583,55 +572,37 @@ function normalizarPanel(nombrePanel) {
     return texto;
 }
 
-function normalizarPanelDesdeCampaniaConMapeo(nombreCampania, mapaPanelesLegacy, mapeoNumeroANombre) {
+function normalizarPanelDesdeCampaniaConMapeoDinamico(nombreCampania, mapeoNombreANumero, mapeoNumeroANombre) {
     if (!nombreCampania) return "";
 
     const texto = String(nombreCampania).trim().toLowerCase();
-    console.log(`🔍 Analizando campaña: "${texto}"`);
+    console.log(`🔍 Analizando campaña dinámicamente: "${texto}"`);
 
-    // 1️⃣ PRIMERA ESTRATEGIA: Buscar por nombres de panel (de la hoja PANELES)
-    for (let numero in mapeoNumeroANombre) {
-        const nombrePanel = mapeoNumeroANombre[numero];
-        if (texto.includes(nombrePanel)) {
-            console.log(`✅ Match por nombre dinámico: "${nombrePanel}" → Panel ${numero}`);
-            return numero; // Retornamos el número del panel
-        }
-    }
-
-    // 2️⃣ SEGUNDA ESTRATEGIA: Usar mapeo legacy (fallback)
-    for (let clave in mapaPanelesLegacy) {
-        if (texto.includes(clave)) {
-            const numeroPanel = mapaPanelesLegacy[clave];
-            console.log(`✅ Match por mapeo legacy: "${clave}" → Panel ${numeroPanel}`);
+    // 1️⃣ PRIMERA ESTRATEGIA: Buscar por nombres de panel (dinámico)
+    for (let nombre in mapeoNombreANumero) {
+        if (texto.includes(nombre)) {
+            const numeroPanel = mapeoNombreANumero[nombre];
+            console.log(`✅ Match dinámico: "${nombre}" → Panel ${numeroPanel}`);
             return numeroPanel;
         }
     }
 
-    // 3️⃣ TERCERA ESTRATEGIA: Extraer número del formato "Panel-X-..." o "X-..."
+    // 2️⃣ SEGUNDA ESTRATEGIA: Extraer número del formato "Panel-X-..." o "X-..."
     const partes = texto.split('-');
     if (partes.length > 0) {
         const primerParte = String(partes[0] || "").trim();
         
         // Buscar en nombres dinámicos
-        for (let numero in mapeoNumeroANombre) {
-            const nombrePanel = mapeoNumeroANombre[numero];
-            if (primerParte.includes(nombrePanel)) {
-                console.log(`✅ Match por primera parte dinámico: "${primerParte}" contiene "${nombrePanel}" → Panel ${numero}`);
-                return numero;
-            }
-        }
-        
-        // Buscar en mapeo legacy
-        for (let clave in mapaPanelesLegacy) {
-            if (primerParte.includes(clave)) {
-                const numeroPanel = mapaPanelesLegacy[clave];
-                console.log(`✅ Match por primera parte legacy: "${primerParte}" contiene "${clave}" → Panel ${numeroPanel}`);
+        for (let nombre in mapeoNombreANumero) {
+            if (primerParte.includes(nombre)) {
+                const numeroPanel = mapeoNombreANumero[nombre];
+                console.log(`✅ Match por primera parte dinámico: "${primerParte}" contiene "${nombre}" → Panel ${numeroPanel}`);
                 return numeroPanel;
             }
         }
     }
 
-    console.log(`❌ No se encontró match para: "${texto}"`);
+    console.log(`❌ No se encontró match dinámico para: "${texto}"`);
     return "";
 }
 
