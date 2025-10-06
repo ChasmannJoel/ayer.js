@@ -21,12 +21,17 @@ function generarReporteMensajesAyer() {
     const campaniasMetaAds = datos.campaniasMetaAds || {}; // ✅ Esto es lo importante
 
     crearEncabezadosMensajesAyer(hoja, fechaAyer);
-    llenarDatosMensajesAyer(hoja, reportePaneles);
+
+    // Leer el mapeo una sola vez para reutilizarlo en todo el flujo
+    const mapeoNumeroANombre = obtenerMapeoDesdeHojaPaneles();
+
+    llenarDatosMensajesAyer(hoja, reportePaneles, mapeoNumeroANombre);
+    asegurarNombresVisiblesEnHoja(hoja, mapeoNumeroANombre);
     aplicarFormatoMensajesAyer(hoja);
     imprimirFrasesCierreEnColumnaC(hoja, respuestasPaneles);
     
     // ✅ CORRECCIÓN: Pasar campaniasMetaAds directamente
-    agregarGastosPorPanelDesdeCampanias(hoja, campaniasMetaAds);
+    agregarGastosPorPanelDesdeCampanias(hoja, campaniasMetaAds, mapeoNumeroANombre);
 }
 
 function obtenerDatosDelServidor(apiUrl) {
@@ -156,16 +161,16 @@ function crearEncabezadosMensajesAyer(hoja, fechaAyer) {
     hoja.getRange(4, 1, 1, encabezados.length).setValues([encabezados]);
 }
 
-function llenarDatosMensajesAyer(hoja, reportePaneles) {
+function llenarDatosMensajesAyer(hoja, reportePaneles, mapeoNumeroANombre) {
     const filaInicio = 5;
-    
-    // Obtener mapeo de números a nombres
-    const mapeoNumeroANombre = obtenerMapeoDesdeHojaPaneles();
+
+    // Obtener mapeo de números a nombres si no fue proporcionado
+    mapeoNumeroANombre = mapeoNumeroANombre || obtenerMapeoDesdeHojaPaneles();
     console.log('🗂️ Mapeo obtenido para llenar datos:', mapeoNumeroANombre);
 
     reportePaneles.forEach((panelData, index) => {
         const fila = filaInicio + index;
-        
+
         // Usar los datos correctos del JSON estructurado
         const mensajes = panelData.total_mensajes_hoy || 0;
         const cargas = panelData.cargas_hoy || 0;
@@ -176,11 +181,38 @@ function llenarDatosMensajesAyer(hoja, reportePaneles) {
             hoja.getRange(fila, 1, 1, 4).setBackground("#f9fbe7");
         }
 
-        // Convertir número de panel a nombre usando el mapeo dinámico
-        const numeroPanel = String(panelData.panel || "");
-        const nombrePanel = mapeoNumeroANombre[numeroPanel] || numeroPanel;
+        // Obtener el código del panel desde los datos (normalizado)
+        const codigoPanel = normalizarCodigoPanel(
+            panelData.panel ??
+            panelData.codigo ??
+            panelData.numero ??
+            panelData.id
+        );
 
-        console.log(`📋 Panel ${index + 1}: Número "${numeroPanel}" → Nombre "${nombrePanel}"`);
+        // Intentar obtener un nombre ya presente en la respuesta
+        const nombreDesdeDatos = obtenerNombrePanelDesdeDatos(panelData);
+
+        // Resolver nombre final priorizando el mapeo de la hoja
+        const nombreDesdeMapeo = codigoPanel ? mapeoNumeroANombre[codigoPanel] : "";
+        let nombrePanel = nombreDesdeMapeo || nombreDesdeDatos;
+
+        // Si todavía no hay nombre pero tenemos código, usarlo temporalmente
+        if (!nombrePanel) {
+            nombrePanel = codigoPanel || "sin panel";
+        }
+
+        // Si el nombre sigue siendo un código numérico, intentar resolverlo con el mapeo
+        if (/^\d+$/.test(nombrePanel) && codigoPanel) {
+            const codigoNormalizado = normalizarCodigoPanel(codigoPanel);
+            const nombreMapeado = mapeoNumeroANombre[codigoNormalizado];
+
+            if (nombreMapeado) {
+                console.log(`🔁 Corrigiendo nombre numérico "${nombrePanel}" → "${nombreMapeado}"`);
+                nombrePanel = nombreMapeado;
+            }
+        }
+
+        console.log(`📋 Panel ${index + 1}: Código "${codigoPanel}" → Nombre "${nombrePanel}"`);
 
         // Llenar las columnas con los datos correctos
         hoja.getRange(fila, 1).setValue(nombrePanel);
@@ -219,7 +251,78 @@ function imprimirFrasesCierreEnColumnaC(hoja, respuestasPaneles) {
     Logger.log("✅ Datos de cargas y porcentajes ya incluidos en reportePaneles");
 }
 
-function agregarGastosPorPanelDesdeCampanias(hoja, campaniasMetaAds) {
+function obtenerNombrePanelDesdeDatos(panelData) {
+    if (!panelData || typeof panelData !== 'object') {
+        return "";
+    }
+
+    const posiblesNombres = [
+        panelData.nombre_panel,
+        panelData.panel_nombre,
+        panelData.nombrePanel,
+        panelData.nombre,
+        panelData.panelName
+    ];
+
+    for (let nombre of posiblesNombres) {
+        if (nombre === null || nombre === undefined) continue;
+
+        try {
+            const texto = String(nombre).trim();
+            if (!texto) continue;
+
+            // Evitar devolver valores puramente numéricos (son códigos, no nombres)
+            if (/^\d+$/.test(texto)) {
+                console.log(`⚠️ Nombre ignorado por ser numérico: "${texto}"`);
+                continue;
+            }
+
+            return texto;
+        } catch (error) {
+            console.log('⚠️ No se pudo convertir nombre de panel a texto:', nombre, error);
+        }
+    }
+
+    return "";
+}
+
+function asegurarNombresVisiblesEnHoja(hoja, mapeoNumeroANombre) {
+    if (!hoja) return;
+
+    const ultimaFila = hoja.getLastRow();
+    if (ultimaFila <= 4) return;
+
+    const totalFilas = ultimaFila - 4;
+    const rango = hoja.getRange(5, 1, totalFilas, 1);
+    const valores = rango.getValues();
+    let huboCambios = false;
+
+    for (let i = 0; i < valores.length; i++) {
+        const contenido = valores[i][0];
+        if (contenido === null || contenido === undefined) continue;
+
+        const texto = String(contenido).trim();
+        if (!texto) continue;
+
+        // Si ya es un nombre (no numérico), dejarlo intacto
+        if (!/^\d+$/.test(texto)) continue;
+
+        const codigoNormalizado = normalizarCodigoPanel(texto);
+        const nombre = mapeoNumeroANombre[codigoNormalizado];
+
+        if (nombre && nombre !== texto) {
+            valores[i][0] = nombre;
+            huboCambios = true;
+            console.log(`🔁 Reemplazando código "${texto}" por nombre "${nombre}" en fila ${5 + i}`);
+        }
+    }
+
+    if (huboCambios) {
+        rango.setValues(valores);
+    }
+}
+
+function agregarGastosPorPanelDesdeCampanias(hoja, campaniasMetaAds, mapeoNumeroANombre) {
     // ✅ VALIDACIÓN: Verificar que campaniasMetaAds existe
     if (!campaniasMetaAds) {
         console.log('⚠️ campaniasMetaAds es undefined o null');
@@ -228,14 +331,18 @@ function agregarGastosPorPanelDesdeCampanias(hoja, campaniasMetaAds) {
     }
     
     // ✅ NUEVO: Obtener mapeo dinámico desde la hoja PANELES del mismo archivo
-    const mapeoNumeroANombre = obtenerMapeoDesdeHojaPaneles();
+    mapeoNumeroANombre = mapeoNumeroANombre || obtenerMapeoDesdeHojaPaneles();
     console.log('🗂️ Mapeo número → nombre:', mapeoNumeroANombre);
+
+    // Asegurar que la columna de paneles muestre los nombres antes de procesar gastos
+    asegurarNombresVisiblesEnHoja(hoja, mapeoNumeroANombre);
     
     // Crear mapeo inverso dinámico (nombre → número)
     const mapeoNombreANumero = {};
     for (let numero in mapeoNumeroANombre) {
         const nombre = mapeoNumeroANombre[numero];
-        mapeoNombreANumero[nombre] = numero;
+        if (!nombre) continue;
+        mapeoNombreANumero[String(nombre).toLowerCase()] = numero;
     }
     console.log('🔄 Mapeo nombre → número:', mapeoNombreANumero);
     
@@ -303,7 +410,10 @@ function agregarGastosPorPanelDesdeCampanias(hoja, campaniasMetaAds) {
         const panelString = String(fila[0] ?? '').trim();
 
         // ✅ CORRECCIÓN: Usar mapeo dinámico para obtener el número
-        const numeroPanel = mapeoNombreANumero[panelString.toLowerCase()] || panelString;
+        const numeroPanel =
+            mapeoNombreANumero[panelString.toLowerCase()] ||
+            normalizarCodigoPanel(panelString) ||
+            panelString;
 
         console.log(`🔄 Panel fila ${index + 1}: "${panelString}" → Número para gastos: "${numeroPanel}"`);
 
@@ -468,18 +578,18 @@ function obtenerMapeoDesdeHojaPaneles() {
         for (let i = 0; i < nombresPanel.length; i++) {
             const nombre = nombresPanel[i][0];
             const codigo = codigosPanel[i][0];
-            
+
             if (nombre && codigo) {
-                const nombreStr = String(nombre).trim().toLowerCase();
-                const codigoStr = String(codigo).trim();
-                
+                const nombreStr = String(nombre).trim();
+                const codigoStr = normalizarCodigoPanel(codigo);
+
                 if (nombreStr && codigoStr) {
                     mapeoNumeroANombre[codigoStr] = nombreStr;
                     console.log(`📌 Mapeo agregado: ${codigoStr} → ${nombreStr}`);
                 }
             }
         }
-        
+
         console.log('✅ Mapeo desde hoja PANELES completado:', mapeoNumeroANombre);
         return mapeoNumeroANombre;
         
@@ -487,6 +597,36 @@ function obtenerMapeoDesdeHojaPaneles() {
         console.error('❌ Error al leer hoja PANELES:', error);
         return {};
     }
+}
+
+function normalizarCodigoPanel(codigo) {
+    if (codigo === null || codigo === undefined) {
+        return "";
+    }
+
+    let codigoStr;
+
+    try {
+        codigoStr = String(codigo).trim();
+    } catch (error) {
+        console.log('⚠️ No se pudo convertir código de panel a texto:', codigo, error);
+        return "";
+    }
+
+    if (!codigoStr) {
+        return "";
+    }
+
+    if (/^\d+$/.test(codigoStr)) {
+        return String(parseInt(codigoStr, 10));
+    }
+
+    const match = codigoStr.match(/(\d+)/);
+    if (match) {
+        return String(parseInt(match[1], 10));
+    }
+
+    return codigoStr.toLowerCase();
 }
 
 function obtenerMapeoNombresDesdeHojaExterna() {
